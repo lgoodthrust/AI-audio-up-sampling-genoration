@@ -151,6 +151,6 @@ enhanced_audio = enhanced_audio / max_val  # Normalize to [-1.0, 1.0]
 enhanced_audio = volume_eq_bandpass(enhanced_audio, sr, {100:0.75, 500:0.85, 1000:0.9, 3000:0.9, 5000:0.9, 10000:0.9, 15000:0.9, 20000:0.8}, 20, 17000)
 
 # Save the enhanced audio
-output_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\output_data\07.wav"
+output_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\output_data\08.wav"
 sf.write(output_path, enhanced_audio, sr)
 print(f"Enhanced and noise-suppressed audio saved to {output_path}")
