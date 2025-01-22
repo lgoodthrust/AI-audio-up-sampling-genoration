@@ -114,7 +114,7 @@ def volume_eq_bandpass(audio, sr, eq_settings=None, low_cutoff=100, high_cutoff=
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Path to the model checkpoint
-model_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\models\01.pth"
+model_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\models\02.pth"
 
 # Load Model and Hyperparameters
 checkpoint = torch.load(model_path, map_location=device)
@@ -151,6 +151,6 @@ enhanced_audio = enhanced_audio / max_val  # Normalize to [-1.0, 1.0]
 enhanced_audio = volume_eq_bandpass(enhanced_audio, sr, {100:0.75, 500:0.85, 1000:0.9, 3000:0.9, 5000:0.9, 10000:0.9, 15000:0.9, 20000:0.8}, 20, 17000)
 
 # Save the enhanced audio
-output_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\output_data\08.wav"
+output_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\output_data\09.wav"
 sf.write(output_path, enhanced_audio, sr)
 print(f"Enhanced and noise-suppressed audio saved to {output_path}")

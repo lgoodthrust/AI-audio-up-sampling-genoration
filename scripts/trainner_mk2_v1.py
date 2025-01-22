@@ -9,55 +9,72 @@ from torch.utils.data import Dataset, DataLoader
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-sr = 44100
+sr = 64000
 loss_data = []
 
 
 class PairedAudioDataset(Dataset):
-    def __init__(self, folder_path, sample_rate=sr, segment_length=0.1):
+    def __init__(self, folder_path, sample_rate=96000, segment_length=0.1, mode="train"):
         if not os.path.exists(folder_path):
             raise FileNotFoundError(f"Dataset folder {folder_path} not found.")
         self.folder_path = folder_path
         self.sample_rate = sample_rate
         self.segment_length = segment_length
         self.segment_samples = int(sample_rate * segment_length)
+        self.mode = mode
 
         self.pairs = []
         for file in os.listdir(folder_path):
-            if file.endswith("_low.wav"):
+            if file.endswith("_low.wav") and self.mode == "train":
                 pair_id = file.replace("_low.wav", "")
                 high_file = f"{pair_id}_high.wav"
                 if high_file in os.listdir(folder_path):
                     self.pairs.append((file, high_file))
+            elif file.endswith("_high.wav") and self.mode == "val":
+                pair_id = file.replace("_high.wav", "")
+                low_file = f"{pair_id}_low.wav"
+                if low_file in os.listdir(folder_path):
+                    self.pairs.append((low_file, file))
 
     def __len__(self):
         return len(self.pairs)
 
     def __getitem__(self, idx):
-        low_file, high_file = self.pairs[idx]
-        low_path = os.path.join(self.folder_path, low_file)
-        high_path = os.path.join(self.folder_path, high_file)
+        try:
+            low_file, high_file = self.pairs[idx]
+            low_path = os.path.join(self.folder_path, low_file)
+            high_path = os.path.join(self.folder_path, high_file)
 
-        low_audio, _ = librosa.load(low_path, sr=self.sample_rate, mono=True)
-        high_audio, _ = librosa.load(high_path, sr=self.sample_rate, mono=True)
+            low_audio, _ = librosa.load(low_path, sr=self.sample_rate, mono=True)
+            high_audio, _ = librosa.load(high_path, sr=self.sample_rate, mono=True)
 
-        low_audio = low_audio.astype(np.float32) / (np.max(np.abs(low_audio)) + 1e-8)
-        high_audio = high_audio.astype(np.float32) / (np.max(np.abs(high_audio)) + 1e-8)
+            # Log audio statistics
+            print(f"Loaded low_audio max: {np.max(np.abs(low_audio))}, high_audio max: {np.max(np.abs(high_audio))}")
 
-        min_length = min(len(low_audio), len(high_audio))
-        low_audio = low_audio[:min_length]
-        high_audio = high_audio[:min_length]
+            if np.max(np.abs(low_audio)) < 1e-8 or np.max(np.abs(high_audio)) < 1e-8:
+                print(f"Skipping pair due to low max value: {low_file}, {high_file}")
+                return None
 
-        if len(low_audio) > self.segment_samples:
-            start = np.random.randint(0, len(low_audio) - self.segment_samples)
-            end = start + self.segment_samples
-            low_audio = low_audio[start:end]
-            high_audio = high_audio[start:end]
+            low_audio = low_audio.astype(np.float32) / (np.max(np.abs(low_audio)) + 1e-6)
+            high_audio = high_audio.astype(np.float32) / (np.max(np.abs(high_audio)) + 1e-6)
 
-        low_tensor = torch.tensor(low_audio, dtype=torch.float32)
-        high_tensor = torch.tensor(high_audio, dtype=torch.float32)
+            min_length = min(len(low_audio), len(high_audio))
+            low_audio = low_audio[:min_length]
+            high_audio = high_audio[:min_length]
 
-        return low_tensor, high_tensor
+            if len(low_audio) > self.segment_samples:
+                start = np.random.randint(0, len(low_audio) - self.segment_samples)
+                end = start + self.segment_samples
+                low_audio = low_audio[start:end]
+                high_audio = high_audio[start:end]
+
+            low_tensor = torch.clamp(torch.tensor(low_audio, dtype=torch.float32), min=-1.0, max=1.0)
+            high_tensor = torch.clamp(torch.tensor(high_audio, dtype=torch.float32), min=-1.0, max=1.0)
+
+            return low_tensor, high_tensor
+        except Exception as e:
+            print(f"Error processing pair {idx}: {e}")
+            return None
 
 
 def collate_fn(batch):
@@ -69,15 +86,15 @@ class AudioEnhancementModel(nn.Module):
         super(AudioEnhancementModel, self).__init__()
         self.encoder = nn.Sequential(
             nn.Conv1d(1, 64, kernel_size=9, stride=1, padding=4),
-            nn.BatchNorm1d(64),
+            nn.LayerNorm([6400]),  # Match the last dimension of the input tensor
             nn.ReLU(),
             nn.Conv1d(64, 128, kernel_size=9, stride=2, padding=4),
-            nn.BatchNorm1d(128),
+            nn.LayerNorm([3200]),  # Adjust dynamically for the next layer's output shape
             nn.ReLU(),
         )
         self.decoder = nn.Sequential(
             nn.ConvTranspose1d(128, 64, kernel_size=9, stride=2, padding=4, output_padding=1),
-            nn.BatchNorm1d(64),
+            nn.LayerNorm([6400]),  # Match the last dimension of the decoder's input
             nn.ReLU(),
             nn.Conv1d(64, 1, kernel_size=9, stride=1, padding=4),
         )
@@ -85,41 +102,21 @@ class AudioEnhancementModel(nn.Module):
     def forward(self, x):
         x = x.unsqueeze(1)
         x = self.encoder(x)
+        print(f"Encoder output min: {x.min().item()}, max: {x.max().item()}")
         x = self.decoder(x)
         return x.squeeze(1)
 
 
-class CustomLoss(nn.Module):
-    def __init__(self, alpha=0.5):
-        super(CustomLoss, self).__init__()
-        self.alpha = alpha
-        self.l1_loss = nn.L1Loss()
-        self.mse_loss = nn.MSELoss()
-        self.s_margin_loss = nn.SoftMarginLoss()
+def initialize_weights(m):
+    if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
+        nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
 
-    def forward(self, outputs, targets):
-        return self.alpha * self.l1_loss(outputs, targets) + (1 - self.alpha) * self.mse_loss(outputs, targets) * self.s_margin_loss(outputs, targets)
-
-
-class MeanCubedRootLoss(nn.Module):
-    def __init__(self):
-        super(MeanCubedRootLoss, self).__init__()
-
-    def forward(self, outputs, targets):
-        diff = torch.abs(outputs - targets)  # Absolute difference
-        return torch.mean(torch.pow(diff, 1/3))
-
-
-
-def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate=1e-5):
-    criterion = nn.MSELoss() # MeanCubedRootLoss() # CustomLoss(alpha=0.75) # nn.MSELoss()
+def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate=1e-6):
+    criterion = nn.L1Loss()  # Changed to L1 loss for stability
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    scaler = torch.cuda.amp.GradScaler(  # Mixed precision training
-                                    init_scale=2 ** 16,
-                                    growth_factor= 1.25,
-                                    backoff_factor= 0.75,
-                                    growth_interval= 750,
-                                )
+    scaler = torch.cuda.amp.GradScaler()  # Mixed precision training
     model.to(device)
 
     for epoch in range(epochs):
@@ -133,14 +130,27 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
             optimizer.zero_grad()
             with torch.cuda.amp.autocast():
                 outputs = model(low_quality)
-                loss = criterion(outputs, high_quality)
+                loss = criterion(outputs + 1e-8, high_quality)
+
+            # Log outputs for debugging
+            print(f"Outputs min: {outputs.min().item()}, max: {outputs.max().item()}, mean: {outputs.mean().item()}")
+
+            # Skip update if loss is NaN
+            if torch.isnan(loss):
+                print("NaN detected in loss. Skipping update.")
+                continue
 
             scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # Reduced gradient clipping value
             scaler.step(optimizer)
             scaler.update()
 
             total_loss += loss.item()
+
+        # Check for NaN in model weights
+        for name, param in model.named_parameters():
+            if torch.isnan(param).any():
+                print(f"NaN detected in {name}")
 
         model.eval()
         val_loss = 0.0
@@ -154,49 +164,47 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
                     outputs = model(low_quality)
                     val_loss += criterion(outputs, high_quality).item()
 
+                # Log validation loss per batch
+                print(f"Validation batch loss: {val_loss}")
+
         loss_data.append({"tl": total_loss / len(dataloader), "vl": val_loss / len(val_dataloader)})
         print(f"Epoch {epoch+1}/{epochs}, Training Loss: {loss_data[-1]['tl']:.6f}, Validation Loss: {loss_data[-1]['vl']:.6f}")
 
 
 # Model Control Function
-def model_ctrl(b_size=32, t_frac=0.8, lr=1e-5, epoch_steps=32, samp_rate=64000):
+def model_ctrl(b_size=32, lr=1e-6, epoch_steps=32, samp_rate=44100):
     # Data Loader
-    folder_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data_b2"
+    folder_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data"
     print(f"Checking dataset folder: {folder_path}")
     if not os.path.exists(folder_path):
         print("Dataset folder does not exist!")
         return
 
-    dataset = PairedAudioDataset(folder_path)
-    print(f"Number of pairs in dataset: {len(dataset)}")
+    train_dataset = PairedAudioDataset(folder_path, sample_rate=samp_rate, mode="train")
+    val_dataset = PairedAudioDataset(folder_path, sample_rate=samp_rate, mode="val")
 
-    train_size = int(t_frac * len(dataset))
-    val_size = len(dataset) - train_size
-    print(f"Training set size: {train_size}, Validation set size: {val_size}")
-
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-
-    optimal_batch_size = min(b_size, len(train_dataset), len(val_dataset))
+    print(f"Training set size: {len(train_dataset)}, Validation set size: {len(val_dataset)}")
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=optimal_batch_size,
+        batch_size=min(b_size, len(train_dataset)),  # Adjust batch size dynamically
         shuffle=True,
-        num_workers=0,  # Single-threaded loading = 0
-        pin_memory=False, # Single-threaded loading = False
+        num_workers=0,  # Single-threaded loading
+        pin_memory=False,
         collate_fn=collate_fn
     )
     val_dataloader = DataLoader(
         val_dataset,
-        batch_size=optimal_batch_size,
-        shuffle=True,
-        num_workers=0,  # Single-threaded loading = 0
-        pin_memory=False, # Single-threaded loading = False
+        batch_size=min(b_size, len(val_dataset)),  # Adjust batch size dynamically
+        shuffle=False,
+        num_workers=0,  # Single-threaded loading
+        pin_memory=False,
         collate_fn=collate_fn
     )
 
     # Initialize and Train the Model
     model = AudioEnhancementModel()
+    model.apply(initialize_weights)
 
     train_model(
         model,
@@ -221,7 +229,7 @@ def model_ctrl(b_size=32, t_frac=0.8, lr=1e-5, epoch_steps=32, samp_rate=64000):
     plt.show()
 
     # Save Model and Hyperparameters
-    model_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\models\02.pth"
+    model_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\models\01.pth"
     torch.save({
         'model_state_dict': model.state_dict(),
         'hyperparameters': {
@@ -236,9 +244,8 @@ def model_ctrl(b_size=32, t_frac=0.8, lr=1e-5, epoch_steps=32, samp_rate=64000):
 # Execute the Control Function
 if __name__ == "__main__":
     model_ctrl(
-        b_size=1,
-        t_frac=0.85,
+        b_size=256,
         lr=1e-6,
-        epoch_steps=128,
+        epoch_steps=32,
         samp_rate=sr
     )
