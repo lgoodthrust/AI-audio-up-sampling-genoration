@@ -1,21 +1,16 @@
-The MIT License (MIT)
+Welcome to the AI-audio-up-sampling-genoration Project!
 
-Copyright (c) 2025 Circuit Board
+No its not a wiki, its just a random pile of stuff about the project... It will not be organized what so ever >:3
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This model is simply a fun side project for me to explore my fascination with AI technology.
+As some of you might understand, AI is the next big frontier, waiting to be explored and understood.
+I simply want to contribute and explore what I can while there is still an unknown.  
+I know python isn't the most "efficient language" to lean in, but It detailed, popular, and relatively adaptable. 
+If you want to use my code I don't mind at all, I just ask that you give credit where do.
 
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
+---important stuff---
+Python version: 3.12
+Torch version: cu118
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+Model training data: 
+287 wav file pairs (12.2GB)
