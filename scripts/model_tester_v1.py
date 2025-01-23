@@ -10,25 +10,25 @@ class AudioEnhancementModel(nn.Module):
     def __init__(self):
         super(AudioEnhancementModel, self).__init__()
         self.encoder = nn.Sequential(
-            nn.Conv1d(1, 64, kernel_size=9, stride=1, padding=4),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Conv1d(64, 128, kernel_size=9, stride=2, padding=4),
+            nn.Conv1d(1, 128, kernel_size=9, stride=1, padding=4),
             nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Conv1d(128, 256, kernel_size=9, stride=2, padding=4),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
         )
         self.decoder = nn.Sequential(
-            nn.ConvTranspose1d(128, 64, kernel_size=9, stride=2, padding=4, output_padding=1),
-            nn.BatchNorm1d(64),
+            nn.ConvTranspose1d(256, 128, kernel_size=9, stride=2, padding=4, output_padding=1),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Conv1d(64, 1, kernel_size=9, stride=1, padding=4),
+            nn.Conv1d(128, 1, kernel_size=9, stride=1, padding=4),
         )
 
     def forward(self, x):
-        x = x.unsqueeze(1)  # Add channel dimension
+        x = x.unsqueeze(1)
         x = self.encoder(x)
         x = self.decoder(x)
-        return x.squeeze(1)  # Remove channel dimension
+        return x.squeeze(1)
     
 def noise_gate(audio, threshold=0.01):
     """
@@ -144,13 +144,29 @@ with torch.no_grad():
     enhanced_audio = model(low_tensor).cpu().numpy().squeeze()
 
 # Post-process: Noise gate and normalization
-enhanced_audio = noise_gate(enhanced_audio, threshold=0.08)
+enhanced_audio = noise_gate(enhanced_audio, threshold=0.02)
 max_val = max(abs(enhanced_audio.max()), abs(enhanced_audio.min()))
 enhanced_audio = enhanced_audio / max_val  # Normalize to [-1.0, 1.0]
 
-enhanced_audio = volume_eq_bandpass(enhanced_audio, sr, {100:0.75, 500:0.85, 1000:0.9, 3000:0.9, 5000:0.9, 10000:0.9, 15000:0.9, 20000:0.8}, 20, 17000)
+eq = {
+    15:0.75,
+    25:0.75,
+    50:0.75,
+    100:0.75,
+    500:0.85, 
+    1000:0.9, 
+    3000:0.9, 
+    5000:0.9, 
+    8000:0.8,
+    12000:0.8,
+    15000:0.8,
+    17000:0.8, 
+    20000:0.75
+    }
+
+enhanced_audio = volume_eq_bandpass(enhanced_audio, sr, eq, 5, 18000)
 
 # Save the enhanced audio
-output_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\output_data\09.wav"
+output_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\output_data\11.wav"
 sf.write(output_path, enhanced_audio, sr)
 print(f"Enhanced and noise-suppressed audio saved to {output_path}")

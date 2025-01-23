@@ -9,12 +9,12 @@ from torch.utils.data import Dataset, DataLoader
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-sr = 44100
+sr = 96000
 loss_data = []
 
 
 class PairedAudioDataset(Dataset):
-    def __init__(self, folder_path, sample_rate=sr, segment_length=0.1):
+    def __init__(self, folder_path, sample_rate=sr, segment_length=0.25):
         if not os.path.exists(folder_path):
             raise FileNotFoundError(f"Dataset folder {folder_path} not found.")
         self.folder_path = folder_path
@@ -68,18 +68,18 @@ class AudioEnhancementModel(nn.Module):
     def __init__(self):
         super(AudioEnhancementModel, self).__init__()
         self.encoder = nn.Sequential(
-            nn.Conv1d(1, 64, kernel_size=9, stride=1, padding=4),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Conv1d(64, 128, kernel_size=9, stride=2, padding=4),
+            nn.Conv1d(1, 128, kernel_size=9, stride=1, padding=4),
             nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Conv1d(128, 256, kernel_size=9, stride=2, padding=4),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
         )
         self.decoder = nn.Sequential(
-            nn.ConvTranspose1d(128, 64, kernel_size=9, stride=2, padding=4, output_padding=1),
-            nn.BatchNorm1d(64),
+            nn.ConvTranspose1d(256, 128, kernel_size=9, stride=2, padding=4, output_padding=1),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Conv1d(64, 1, kernel_size=9, stride=1, padding=4),
+            nn.Conv1d(128, 1, kernel_size=9, stride=1, padding=4),
         )
 
     def forward(self, x):
@@ -115,10 +115,10 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
     criterion = nn.MSELoss() # MeanCubedRootLoss() # CustomLoss(alpha=0.75) # nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scaler = torch.cuda.amp.GradScaler(  # Mixed precision training
-                                    init_scale=2 ** 16,
-                                    growth_factor= 1.25,
+                                    init_scale=2 ** 10,
+                                    growth_factor= 1.75,
                                     backoff_factor= 0.75,
-                                    growth_interval= 750,
+                                    growth_interval= 150,
                                 )
     model.to(device)
 
@@ -159,9 +159,9 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
 
 
 # Model Control Function
-def model_ctrl(b_size=32, t_frac=0.8, lr=1e-5, epoch_steps=32, samp_rate=64000):
+def model_ctrl(b_size=32, t_frac=0.8, lr=1e-5, epoch_steps=32, samp_rate=sr):
     # Data Loader
-    folder_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data_b2"
+    folder_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data_b3"
     print(f"Checking dataset folder: {folder_path}")
     if not os.path.exists(folder_path):
         print("Dataset folder does not exist!")
@@ -228,7 +228,7 @@ def model_ctrl(b_size=32, t_frac=0.8, lr=1e-5, epoch_steps=32, samp_rate=64000):
             'batch_size': b_size,
             'learning_rate': lr,
             'sample_rate': samp_rate,
-            'segment_length': 0.1  # Adjusted segment length
+            'segment_length': 0.25  # Adjusted segment length
         },
     }, model_path)
     print("Model and hyperparameters saved.")
@@ -237,8 +237,8 @@ def model_ctrl(b_size=32, t_frac=0.8, lr=1e-5, epoch_steps=32, samp_rate=64000):
 if __name__ == "__main__":
     model_ctrl(
         b_size=1,
-        t_frac=0.85,
+        t_frac=0.75,
         lr=1e-6,
-        epoch_steps=128,
+        epoch_steps=32,
         samp_rate=sr
     )
