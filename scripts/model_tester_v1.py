@@ -114,7 +114,7 @@ def volume_eq_bandpass(audio, sr, eq_settings=None, low_cutoff=100, high_cutoff=
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Path to the model checkpoint
-model_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\models\02.pth"
+model_path = r"*\models\02.pth"
 
 # Load Model and Hyperparameters
 checkpoint = torch.load(model_path, map_location=device)
@@ -131,7 +131,7 @@ print("Model loaded successfully.")
 print("generating audio...")
 
 # Path to the input audio
-audio_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\input_data\Savoy & Bright Lights - The Wolf (Savoy Live Version).wav"
+audio_path = r"*\input_data\Savoy & Bright Lights - The Wolf (Savoy Live Version).wav"
 
 # Load and process the low-quality audio
 low_audio, sr = librosa.load(audio_path, sr=hyperparameters['sample_rate'], mono=True)
@@ -167,6 +167,6 @@ eq = {
 enhanced_audio = volume_eq_bandpass(enhanced_audio, sr, eq, 5, 18000)
 
 # Save the enhanced audio
-output_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\output_data\11.wav"
+output_path = r"*\output_data\11.wav"
 sf.write(output_path, enhanced_audio, sr)
 print(f"Enhanced and noise-suppressed audio saved to {output_path}")

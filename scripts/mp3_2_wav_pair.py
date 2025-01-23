@@ -52,7 +52,7 @@ def convert_mp3_to_wav(input_folder, output_folder):
     print("Conversion complete.")
 
 if __name__ == "__main__":
-    input_folder = r"D:\other\sound board"
-    output_folder = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\reserved_training_data"
+    input_folder = r"*\6_years_of_random_mp3_files"
+    output_folder = r"*\trainning_data_b1"
 
     convert_mp3_to_wav(input_folder, output_folder)

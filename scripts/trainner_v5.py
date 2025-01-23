@@ -7,14 +7,18 @@ import librosa
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
+# use GPU if avalible
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# sample rate
 sr = 96000
+# training sample size (seconds)
+tss = 0.25
 loss_data = []
 
 
 class PairedAudioDataset(Dataset):
-    def __init__(self, folder_path, sample_rate=sr, segment_length=0.25):
+    def __init__(self, folder_path, sample_rate=sr, segment_length=tss):
         if not os.path.exists(folder_path):
             raise FileNotFoundError(f"Dataset folder {folder_path} not found.")
         self.folder_path = folder_path
@@ -89,30 +93,8 @@ class AudioEnhancementModel(nn.Module):
         return x.squeeze(1)
 
 
-class CustomLoss(nn.Module):
-    def __init__(self, alpha=0.5):
-        super(CustomLoss, self).__init__()
-        self.alpha = alpha
-        self.l1_loss = nn.L1Loss()
-        self.mse_loss = nn.MSELoss()
-        self.s_margin_loss = nn.SoftMarginLoss()
-
-    def forward(self, outputs, targets):
-        return self.alpha * self.l1_loss(outputs, targets) + (1 - self.alpha) * self.mse_loss(outputs, targets) * self.s_margin_loss(outputs, targets)
-
-
-class MeanCubedRootLoss(nn.Module):
-    def __init__(self):
-        super(MeanCubedRootLoss, self).__init__()
-
-    def forward(self, outputs, targets):
-        diff = torch.abs(outputs - targets)  # Absolute difference
-        return torch.mean(torch.pow(diff, 1/3))
-
-
-
 def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate=1e-5):
-    criterion = nn.MSELoss() # MeanCubedRootLoss() # CustomLoss(alpha=0.75) # nn.MSELoss()
+    criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scaler = torch.cuda.amp.GradScaler(  # Mixed precision training
                                     init_scale=2 ** 10,
@@ -161,7 +143,7 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
 # Model Control Function
 def model_ctrl(b_size=32, t_frac=0.8, lr=1e-5, epoch_steps=32, samp_rate=sr):
     # Data Loader
-    folder_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data_b3"
+    folder_path = r"*\trainning_data_b3"
     print(f"Checking dataset folder: {folder_path}")
     if not os.path.exists(folder_path):
         print("Dataset folder does not exist!")
@@ -221,14 +203,14 @@ def model_ctrl(b_size=32, t_frac=0.8, lr=1e-5, epoch_steps=32, samp_rate=sr):
     plt.show()
 
     # Save Model and Hyperparameters
-    model_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\models\02.pth"
+    model_path = r"*\models\02.pth"
     torch.save({
         'model_state_dict': model.state_dict(),
         'hyperparameters': {
             'batch_size': b_size,
             'learning_rate': lr,
             'sample_rate': samp_rate,
-            'segment_length': 0.25  # Adjusted segment length
+            'segment_length': tss
         },
     }, model_path)
     print("Model and hyperparameters saved.")
