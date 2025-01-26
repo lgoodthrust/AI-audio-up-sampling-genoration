@@ -8,7 +8,7 @@ I simply want to contribute and explore what I can while there is still an unkno
 I know python isn't the most "efficient language" to lean in, but It detailed, popular, and relatively adaptable. 
 If you want to use my code I don't mind at all, I just ask that you give credit where do.
 
----important stuff---
+---important stuff--- 
 Python version: 3.12
 Torch version: cu118
 
