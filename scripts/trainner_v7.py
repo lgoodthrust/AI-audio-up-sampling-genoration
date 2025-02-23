@@ -9,11 +9,12 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 
 # If needed, install external libraries for evaluation metrics:
-# pip install pystoi
+# pip install pystoi pesq
 
+# Sample rate used throughout:
 sr = 96000
-loss_data = []
 
+# Attempt to import STOI and PESQ
 try:
     from pystoi import stoi
 except ImportError:
@@ -41,40 +42,48 @@ class STFTLoss(nn.Module):
         self.win_length = win_length
 
     def forward(self, enhanced, target):
-        loss_val = 0.0
+        """
+        Computes a simple L1 distance between the STFTs of the enhanced and target signals.
+        """
+        # Ensure the shape is (batch, time) for torch.stft
+        # If input is (batch, 1, time), squeeze(1) to remove the channel dim.
+        # However, if it's already (batch, time), this will do nothing.
         enhanced_stft = torch.stft(
-            enhanced, n_fft=self.fft_size,
+            enhanced,
+            n_fft=self.fft_size,
             hop_length=self.hop_size,
             win_length=self.win_length,
             return_complex=True,
             window=torch.hann_window(
-                    window_length=self.win_length,
-                    periodic=False,
-                    dtype=torch.float32,
-                    device=device,
-                    pin_memory=False,
-                    requires_grad=False
+                window_length=self.win_length,
+                periodic=False,
+                dtype=torch.float32,
+                device=device,
+                pin_memory=False,
+                requires_grad=False
             )
         )
 
         target_stft = torch.stft(
-            target, n_fft=self.fft_size,
+            target,
+            n_fft=self.fft_size,
             hop_length=self.hop_size,
             win_length=self.win_length,
             return_complex=True,
             window=torch.hann_window(
-                    window_length=self.win_length,
-                    periodic=False,
-                    dtype=torch.float32,
-                    device=device,
-                    pin_memory=False,
-                    requires_grad=False
+                window_length=self.win_length,
+                periodic=False,
+                dtype=torch.float32,
+                device=device,
+                pin_memory=False,
+                requires_grad=False
             )
         )
+
         # Simple spectral L1
-        loss_val += (enhanced_stft - target_stft).abs().mean()
-        # Average over the number of STFT scales
+        loss_val = (enhanced_stft - target_stft).abs().mean()
         return loss_val
+
 
 #####################################################################
 # 1. Model Architecture: U-Net style 1D network with skip connections
@@ -120,31 +129,34 @@ class AudioEnhancementModel(nn.Module):
         self.tanh = nn.Tanh()
 
     def forward(self, x):
-        x = x.unsqueeze(1)  # (B,1,T)
+        # x shape: (B, T)
+        # Insert channel dimension -> (B, 1, T)
+        x = x.unsqueeze(1)
 
         # --- Encoder ---
-        e1 = self.relu(self.enc_bn1(self.enc_conv1(x)))   # (B,128,T)
-        e2 = self.relu(self.enc_bn2(self.enc_conv2(e1)))  # (B,256,T/2)
-        e3 = self.relu(self.enc_bn3(self.enc_conv3(e2)))  # (B,512,T/4)
-        e4 = self.relu(self.enc_bn4(self.enc_conv4(e3)))  # (B,1024,T/8)
+        e1 = self.relu(self.enc_bn1(self.enc_conv1(x)))       # (B, 128, T)
+        e2 = self.relu(self.enc_bn2(self.enc_conv2(e1)))      # (B, 256, T/2)
+        e3 = self.relu(self.enc_bn3(self.enc_conv3(e2)))      # (B, 512, T/4)
+        e4 = self.relu(self.enc_bn4(self.enc_conv4(e3)))      # (B, 1024, T/8)
 
         # --- Bottleneck ---
-        b  = self.relu(self.bottleneck_bn1(self.bottleneck_conv1(e4)))  # (B,1024,T/8)
-        b  = self.relu(self.bottleneck_bn2(self.bottleneck_conv2(b)))  # (B,1024,T/8)
+        b  = self.relu(self.bottleneck_bn1(self.bottleneck_conv1(e4)))   # (B, 1024, T/8)
+        b  = self.relu(self.bottleneck_bn2(self.bottleneck_conv2(b)))    # (B, 1024, T/8)
 
-        # --- Decoder (Skip Connections) ---
-        d4 = self.relu(self.dec_bn4(self.dec_deconv4(b)))  # (B,512,T/4)
-        d4 = d4 + e3[:, :, :d4.shape[2]]  # Skip connection
+        # --- Decoder (with skip connections) ---
+        d4 = self.relu(self.dec_bn4(self.dec_deconv4(b)))                # (B, 512, T/4)
+        d4 = d4 + e3[:, :, :d4.shape[2]]                                 # Skip connection
 
-        d3 = self.relu(self.dec_bn3(self.dec_deconv3(d4)))  # (B,256,T/2)
-        d3 = d3 + e2[:, :, :d3.shape[2]]  # Skip connection
+        d3 = self.relu(self.dec_bn3(self.dec_deconv3(d4)))               # (B, 256, T/2)
+        d3 = d3 + e2[:, :, :d3.shape[2]]                                 # Skip connection
 
-        d2 = self.relu(self.dec_bn2(self.dec_deconv2(d3)))  # (B,128,T)
-        d2 = d2 + e1[:, :, :d2.shape[2]]  # Skip connection
+        d2 = self.relu(self.dec_bn2(self.dec_deconv2(d3)))               # (B, 128, T)
+        d2 = d2 + e1[:, :, :d2.shape[2]]                                 # Skip connection
 
-        out = self.tanh(self.dec_conv1(d2))  # Output in range [-1, 1]
-        out = out.squeeze(1)  # (B,T)
+        out = self.tanh(self.dec_conv1(d2))                              # (B, 1, T)
+        out = out.squeeze(1)                                             # back to (B, T)
         return out
+
 
 #####################################################################
 # 2. Data Preprocessing & Augmentation
@@ -164,10 +176,7 @@ def random_time_stretch(audio, max_rate_deviation=0.15):
     return librosa.effects.time_stretch(y=audio, rate=rate)
 
 class PairedAudioDataset(Dataset):
-    def __init__(
-        self, folder_path, sample_rate=96000,
-        segment_length=0.25, apply_augmentation=False
-    ):
+    def __init__(self, folder_path, sample_rate=96000, segment_length=0.25, apply_augmentation=False):
         if not os.path.exists(folder_path):
             raise FileNotFoundError(f"Dataset folder {folder_path} not found.")
         self.folder_path = folder_path
@@ -196,23 +205,20 @@ class PairedAudioDataset(Dataset):
         high_audio, _ = librosa.load(high_path, sr=self.sample_rate, mono=True)
 
         # Normalize to [-1,1]
-        low_audio = low_audio.astype(np.float32)
-        low_audio = low_audio / (np.max(np.abs(low_audio)) + 1e-10)
-        high_audio = high_audio.astype(np.float32)
-        high_audio = high_audio / (np.max(np.abs(high_audio)) + 1e-10)
-
+        low_audio = low_audio.astype(np.float32) / (np.max(np.abs(low_audio)) + 1e-10)
+        high_audio = high_audio.astype(np.float32) / (np.max(np.abs(high_audio)) + 1e-10)
 
         # OPTIONAL data augmentation on low_audio only
         if self.apply_augmentation:
-            if np.random.uniform(0.0,1.0) < 0.5:
+            if np.random.uniform(0.0, 1.0) < 0.5:
                 low_audio = random_pitch_shift(low_audio, self.sample_rate, max_steps=2.0)
-            if np.random.uniform(0.0,1.0) < 0.5:
+            if np.random.uniform(0.0, 1.0) < 0.5:
                 try:
                     low_audio = random_time_stretch(low_audio, max_rate_deviation=0.15)
-                except:
-                    pass  # If the segment gets too short, skip
+                except:  # librosa.util.exceptions.ParameterError:
+                    pass  # If the segment becomes too short, skip
 
-        # Make sure both are the same length
+        # Ensure matching lengths
         min_length = min(len(low_audio), len(high_audio))
         low_audio = low_audio[:min_length]
         high_audio = high_audio[:min_length]
@@ -230,49 +236,53 @@ class PairedAudioDataset(Dataset):
         return low_tensor, high_tensor
 
 def collate_fn(batch):
+    """
+    Simple collate_fn that removes any None entries
+    (though we are not returning None in __getitem__, this is just a safeguard).
+    """
     return [b for b in batch if b is not None]
 
+
 #####################################################################
-# 5. Post-Processing Improvements
+# 3. Post-Processing Example
 #####################################################################
 def adaptive_noise_gate(audio, factor=1.2):
     """
-    Zero out samples whose amplitude is below factor * mean amplitude.
+    Example post-processing function: zero out samples whose amplitude is below factor * mean amplitude.
     """
     threshold = factor * np.mean(np.abs(audio))
     audio_gated = np.where(np.abs(audio) < threshold, 0, audio)
     return audio_gated.astype(np.float32)
 
-#####################################################################
-# Training Loop with LR scheduler & optional STFT-based loss
-#####################################################################
 
-
-def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate=1e-5,
-                use_stft_loss=False):
+#####################################################################
+# 4. Training Loop with LR scheduler & optional STFT-based loss
+#####################################################################
+def train_model(
+    model, dataloader, val_dataloader, epochs, device, learning_rate=1e-6, use_stft_loss=False
+):
     """
-    :param use_stft_loss: If True, combines MSELoss with a multi-resolution STFT loss.
+    :param use_stft_loss: If True, combines MSELoss with STFT loss.
     """
-    # Base criterion (MSE or L1).
+    # Base criterion (MSE)
     criterion = nn.MSELoss()
 
     # Optional advanced STFT-based loss
     stft_criterion = STFTLoss() if use_stft_loss else None
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    
-    # Add a learning rate scheduler (ReduceLROnPlateau example)
+
+    # Example: Use a ReduceLROnPlateau scheduler
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=10
     )
 
-    # Keep your original grad scaler
+    # Mixed-precision
     scaler = torch.amp.GradScaler(
-        "cuda",  # Mixed precision training
-        init_scale=2 ** 10,
-        growth_factor=1.75,
+        init_scale=2**10,   # Initial scale
+        growth_factor=1.75, # Scale growth after intervals of successful steps
         backoff_factor=0.75,
-        growth_interval=150,
+        growth_interval=150
     )
 
     model.to(device)
@@ -291,21 +301,23 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
 
             optimizer.zero_grad()
 
-            with torch.amp.autocast("cuda"):
+            with torch.amp.autocast(device_type='cuda', enabled=(device.type=='cuda')):
                 outputs = model(low_quality)
-                
+
                 # Base MSE loss
                 loss = criterion(outputs, high_quality)
 
                 # Optionally combine with STFT-based loss
                 if stft_criterion is not None:
                     stft_loss_val = stft_criterion(outputs, high_quality)
-                    # Combine them, e.g. 50/50 weighting
                     loss = 0.5 * loss + 0.5 * stft_loss_val
 
+            # Backprop with gradient scaling
             scaler.scale(loss).backward()
+
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.95)
+
             scaler.step(optimizer)
             scaler.update()
 
@@ -322,12 +334,12 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
                 low_quality = torch.stack(low_quality).to(device)
                 high_quality = torch.stack(high_quality).to(device)
 
-                with torch.amp.autocast("cuda"):
+                with torch.amp.autocast(device_type='cuda', enabled=(device.type=='cuda')):
                     outputs = model(low_quality)
-                    # Validation criterion
                     batch_loss = criterion(outputs, high_quality)
                     if stft_criterion is not None:
-                        batch_loss = 0.5 * batch_loss + 0.5 * stft_criterion(outputs, high_quality)
+                        stft_loss_val = stft_criterion(outputs, high_quality)
+                        batch_loss = 0.5 * batch_loss + 0.5 * stft_loss_val
 
                 val_loss += batch_loss.item()
 
@@ -337,31 +349,37 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
         val_loss_history.append(avg_val_loss)
 
         print(f"Epoch {epoch+1}/{epochs} | "
-              f"Train Loss: {avg_train_loss:.6f}, "
+              f"Train Loss: {avg_train_loss:.6f} | "
               f"Val Loss: {avg_val_loss:.6f}")
 
-        # Step the scheduler
+        # Update scheduler with validation loss
         scheduler.step(avg_val_loss)
-    
 
     return train_loss_history, val_loss_history
 
 
 ########################################
-# Model Control
+# 5. Model Control / Example Runner
 ########################################
 def model_ctrl(
-                data_folder=r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data_b1",
-                b_size=8,
-                t_frac=0.8,
-                lr=1e-6,
-                epoch_steps=32,
-                samp_rate=96000,
-                segment_len=0.25,
-                use_stft_loss=False,
-                use_augmentation=False
-
-    ):
+    data_folder=r"",
+    b_size=8,
+    t_frac=0.8,
+    lr=1e-6,
+    epoch_steps=32,
+    samp_rate=96000,
+    segment_len=0.25,
+    use_stft_loss=False,
+    use_augmentation=False
+):
+    """
+    Main control function:
+    - Loads the dataset
+    - Splits into training and validation
+    - Trains & validates
+    - Saves model + hyperparameters
+    """
+    # Ensure correct device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Create dataset
@@ -373,7 +391,7 @@ def model_ctrl(
     )
     print(f"Total data pairs: {len(dataset)}")
 
-    # Train/Val Split
+    # Train/Val split
     train_size = int(t_frac * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
@@ -381,27 +399,29 @@ def model_ctrl(
 
     # DataLoaders
     optimal_batch_size = min(b_size, len(train_dataset), len(val_dataset))
-    # Using multiprocessing data loading (num_workers>0) and pin_memory=True for possible speed gains
+
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=optimal_batch_size,
-        shuffle=False,
-        num_workers=3,  # Increase if system resources allow
+        shuffle=False,    # You can switch to True if you prefer
+        num_workers=1,    # Increase if your system supports it
         pin_memory=False,
         collate_fn=collate_fn
     )
+
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=optimal_batch_size,
         shuffle=False,
-        num_workers=3,
+        num_workers=1,
         pin_memory=False,
         collate_fn=collate_fn
     )
 
-    # Initialize and Train the Model
+    # Instantiate Model
     model = AudioEnhancementModel()
 
+    # Train model
     loss_t_data, loss_v_data = train_model(
         model,
         train_dataloader,
@@ -412,10 +432,9 @@ def model_ctrl(
         use_stft_loss=use_stft_loss
     )
 
-    # Plot Training and Validation Loss
+    # Plot training & validation loss
     epochs_range = range(len(loss_t_data))
-
-    plt.figure(figsize=(8,6))
+    plt.figure(figsize=(8, 6))
     plt.plot(epochs_range, loss_t_data, label="Training Loss")
     plt.plot(epochs_range, loss_v_data, label="Validation Loss")
     plt.xlabel("Epochs")
@@ -424,7 +443,7 @@ def model_ctrl(
     plt.legend()
     plt.show()
 
-    # Save Final Model and Hyperparameters
+    # Save final model and hyperparameters
     model_path = r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\models\04.pth"
     torch.save({
         "model_state_dict": model.state_dict(),
@@ -437,16 +456,17 @@ def model_ctrl(
     }, model_path)
     print(f"Model + hyperparams saved to {model_path}")
 
-# Execute the Control Function (example)
+
 if __name__ == "__main__":
+    # Example usage:
     model_ctrl(
-        data_folder=r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data_b1",
+        data_folder=r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data_b4",
         b_size=1,
         t_frac=0.75,
         lr=1e-6,
-        epoch_steps=1,
+        epoch_steps=64,
         samp_rate=sr,
         segment_len=0.25,
-        use_stft_loss=True,
-        use_augmentation=True
+        use_stft_loss=False,
+        use_augmentation=False
     )
