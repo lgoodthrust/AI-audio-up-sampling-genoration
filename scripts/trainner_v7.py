@@ -1,7 +1,5 @@
 import os
 import numpy as np
-import pesq
-import pystoi
 import librosa
 import torch
 import torch.nn as nn
@@ -10,9 +8,24 @@ import matplotlib.pyplot as plt
 
 from torch.utils.data import Dataset, DataLoader
 
+# If needed, install external libraries for evaluation metrics:
+# pip install pystoi
 
-sr = 96000 # sample rate
+sr = 96000
 loss_data = []
+
+try:
+    from pystoi import stoi
+except ImportError:
+    stoi = None
+    print("pystoi not installed. STOI metric will be skipped.")
+
+try:
+    from pesq import pesq
+except ImportError:
+    pesq = None
+    print("pesq not installed. PESQ metric will be skipped.")
+
 
 ########################################
 # Multi-Resolution STFT Loss (optional)
@@ -53,53 +66,63 @@ class AudioEnhancementModel(nn.Module):
         # --- Encoder ---
         self.enc_conv1 = nn.Conv1d(1, 128, kernel_size=15, stride=1, padding=7)
         self.enc_bn1   = nn.BatchNorm1d(128)
+
         self.enc_conv2 = nn.Conv1d(128, 256, kernel_size=15, stride=2, padding=7)
         self.enc_bn2   = nn.BatchNorm1d(256)
+
         self.enc_conv3 = nn.Conv1d(256, 512, kernel_size=15, stride=2, padding=7)
         self.enc_bn3   = nn.BatchNorm1d(512)
+
         self.enc_conv4 = nn.Conv1d(512, 1024, kernel_size=15, stride=2, padding=7)
         self.enc_bn4   = nn.BatchNorm1d(1024)
 
         # --- Bottleneck (Stacked Conv layers) ---
         self.bottleneck_conv1 = nn.Conv1d(1024, 1024, kernel_size=15, stride=1, padding=7)
         self.bottleneck_bn1   = nn.BatchNorm1d(1024)
+
         self.bottleneck_conv2 = nn.Conv1d(1024, 1024, kernel_size=15, stride=1, padding=7)
         self.bottleneck_bn2   = nn.BatchNorm1d(1024)
 
         # --- Decoder ---
         self.dec_deconv4 = nn.ConvTranspose1d(1024, 512, kernel_size=15, stride=2, padding=7, output_padding=1)
         self.dec_bn4     = nn.BatchNorm1d(512)
+
         self.dec_deconv3 = nn.ConvTranspose1d(512, 256, kernel_size=15, stride=2, padding=7, output_padding=1)
         self.dec_bn3     = nn.BatchNorm1d(256)
+
         self.dec_deconv2 = nn.ConvTranspose1d(256, 128, kernel_size=15, stride=2, padding=7, output_padding=1)
         self.dec_bn2     = nn.BatchNorm1d(128)
+
         self.dec_conv1   = nn.Conv1d(128, 1, kernel_size=15, stride=1, padding=7)
 
         self.relu = nn.ReLU(inplace=True)
         self.tanh = nn.Tanh()
 
     def forward(self, x):
-        x = x.unsqueeze(1)
+        x = x.unsqueeze(1)  # (B,1,T)
 
         # --- Encoder ---
-        e1 = self.relu(self.enc_bn1(self.enc_conv1(x)))
-        e2 = self.relu(self.enc_bn2(self.enc_conv2(e1)))
-        e3 = self.relu(self.enc_bn3(self.enc_conv3(e2)))
-        e4 = self.relu(self.enc_bn4(self.enc_conv4(e3)))
+        e1 = self.relu(self.enc_bn1(self.enc_conv1(x)))   # (B,128,T)
+        e2 = self.relu(self.enc_bn2(self.enc_conv2(e1)))  # (B,256,T/2)
+        e3 = self.relu(self.enc_bn3(self.enc_conv3(e2)))  # (B,512,T/4)
+        e4 = self.relu(self.enc_bn4(self.enc_conv4(e3)))  # (B,1024,T/8)
 
         # --- Bottleneck ---
-        b  = self.relu(self.bottleneck_bn1(self.bottleneck_conv1(e4)))
-        b  = self.relu(self.bottleneck_bn2(self.bottleneck_conv2(b)))
+        b  = self.relu(self.bottleneck_bn1(self.bottleneck_conv1(e4)))  # (B,1024,T/8)
+        b  = self.relu(self.bottleneck_bn2(self.bottleneck_conv2(b)))  # (B,1024,T/8)
 
         # --- Decoder (Skip Connections) ---
-        d4 = self.relu(self.dec_bn4(self.dec_deconv4(b)))
-        d4 = d4 + e3[:, :, :d4.shape[2]]
-        d3 = self.relu(self.dec_bn3(self.dec_deconv3(d4)))
-        d3 = d3 + e2[:, :, :d3.shape[2]]
-        d2 = self.relu(self.dec_bn2(self.dec_deconv2(d3)))
-        d2 = d2 + e1[:, :, :d2.shape[2]]
-        out = self.tanh(self.dec_conv1(d2))
-        out = out.squeeze(1)
+        d4 = self.relu(self.dec_bn4(self.dec_deconv4(b)))  # (B,512,T/4)
+        d4 = d4 + e3[:, :, :d4.shape[2]]  # Skip connection
+
+        d3 = self.relu(self.dec_bn3(self.dec_deconv3(d4)))  # (B,256,T/2)
+        d3 = d3 + e2[:, :, :d3.shape[2]]  # Skip connection
+
+        d2 = self.relu(self.dec_bn2(self.dec_deconv2(d3)))  # (B,128,T)
+        d2 = d2 + e1[:, :, :d2.shape[2]]  # Skip connection
+
+        out = self.tanh(self.dec_conv1(d2))  # Output in range [-1, 1]
+        out = out.squeeze(1)  # (B,T)
         return out
 
 #####################################################################
@@ -109,14 +132,14 @@ def random_pitch_shift(audio, sample_rate, max_steps=2.0):
     """
     Randomly shift the pitch of the audio by some semitones in [-max_steps, max_steps].
     """
-    steps = np.random.rand(-max_steps, max_steps)
+    steps = np.random.uniform(-max_steps, max_steps)
     return librosa.effects.pitch_shift(y=audio, sr=sample_rate, n_steps=steps)
 
 def random_time_stretch(audio, max_rate_deviation=0.15):
     """
     Randomly stretch/shrink time by a factor in [1-max_rate_deviation, 1+max_rate_deviation].
     """
-    rate = np.random.rand(1 - max_rate_deviation, 1 + max_rate_deviation)
+    rate = np.random.uniform(1 - max_rate_deviation, 1 + max_rate_deviation)
     return librosa.effects.time_stretch(y=audio, rate=rate)
 
 class PairedAudioDataset(Dataset):
@@ -157,11 +180,12 @@ class PairedAudioDataset(Dataset):
         high_audio = high_audio.astype(np.float32)
         high_audio = high_audio / (np.max(np.abs(high_audio)) + 1e-10)
 
+
         # OPTIONAL data augmentation on low_audio only
         if self.apply_augmentation:
-            if np.random.rand(0.0, 1.0) < 0.5:
+            if np.random.uniform(0.0,1.0) < 0.5:
                 low_audio = random_pitch_shift(low_audio, self.sample_rate, max_steps=2.0)
-            if np.random.rand(0.0, 1.0) < 0.5:
+            if np.random.uniform(0.0,1.0) < 0.5:
                 try:
                     low_audio = random_time_stretch(low_audio, max_rate_deviation=0.15)
                 except:
@@ -298,24 +322,23 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
         # Step the scheduler
         scheduler.step(avg_val_loss)
     
-    losses = {"t1":train_loss_history,"v1":val_loss_history}
 
-    return losses
+    return train_loss_history, val_loss_history
 
 
 ########################################
 # Model Control
 ########################################
 def model_ctrl(
-    data_folder=r"trainning_data_b1", ######################################################### SET ACTUAL FOLDER PATH
-    b_size=8,
-    t_frac=0.8,
-    lr=1e-5,
-    epoch_steps=32,
-    samp_rate=96000,
-    segment_len=0.25,
-    use_stft_loss=False
-):
+                data_folder=r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data_b1",
+                b_size=8,
+                t_frac=0.8,
+                lr=1e-6,
+                epoch_steps=32,
+                samp_rate=96000,
+                segment_len=0.25,
+                use_stft_loss=False
+    ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Create dataset
@@ -339,26 +362,24 @@ def model_ctrl(
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=optimal_batch_size,
-        shuffle=True,
-        num_workers=4,  # Increase if system resources allow
-        pin_memory=True,
+        shuffle=False,
+        num_workers=3,  # Increase if system resources allow
+        pin_memory=False,
         collate_fn=collate_fn
     )
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=optimal_batch_size,
         shuffle=False,
-        num_workers=4,
-        pin_memory=True,
+        num_workers=3,
+        pin_memory=False,
         collate_fn=collate_fn
     )
 
     # Initialize and Train the Model
     model = AudioEnhancementModel()
-    # You can enable STFT-based loss here:
-    use_stft_loss = False  # Set to True if you want to experiment with the advanced spectral loss
 
-    loss_data = train_model(
+    loss_t_data, loss_v_data = train_model(
         model,
         train_dataloader,
         val_dataloader,
@@ -369,13 +390,11 @@ def model_ctrl(
     )
 
     # Plot Training and Validation Loss
-    training_loss = [entry["tl"] for entry in loss_data]
-    validation_loss = [entry["vl"] for entry in loss_data]
-    epochs_range = range(len(loss_data))
+    epochs_range = range(len(loss_t_data))
 
     plt.figure(figsize=(8,6))
-    plt.plot(epochs_range, training_loss, label="Training Loss")
-    plt.plot(epochs_range, validation_loss, label="Validation Loss")
+    plt.plot(epochs_range, loss_t_data, label="Training Loss")
+    plt.plot(epochs_range, loss_v_data, label="Validation Loss")
     plt.xlabel("Epochs")
     plt.ylabel("Loss")
     plt.title("Training and Validation Loss")
@@ -401,8 +420,8 @@ if __name__ == "__main__":
         data_folder=r"D:\code stuff\AAA\py scripts\audio_AI\UPSCALING\trainning_data_b1",
         b_size=1,
         t_frac=0.75,
-        lr=1e-5,
-        epoch_steps=64,
+        lr=1e-6,
+        epoch_steps=1,
         samp_rate=sr,
         segment_len=0.25,
         use_stft_loss=True
