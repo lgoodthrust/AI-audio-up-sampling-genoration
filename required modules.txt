@@ -12,5 +12,6 @@ librosa
 numpy
 matplotlib
 soundfile
-scipy 
-
+scipy
+pesq
+pystoi
