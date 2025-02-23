@@ -31,51 +31,50 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 ########################################
-# Multi-Resolution STFT Loss (optional)
+# STFT Loss (optional)
 ########################################
-class MultiResolutionSTFTLoss(nn.Module):
-    def __init__(self, fft_sizes=[1024, 2048], hop_sizes=[256, 512], win_lengths=[1024, 2048]):
+class STFTLoss(nn.Module):
+    def __init__(self, fft_size=1024, hop_siz=256, win_length=1024):
         super().__init__()
-        self.fft_sizes = fft_sizes
-        self.hop_sizes = hop_sizes
-        self.win_lengths = win_lengths
+        self.fft_size = fft_size
+        self.hop_size = hop_siz
+        self.win_length = win_length
 
     def forward(self, enhanced, target):
         loss_val = 0.0
-        for fft_size, hop_size, win_length in zip(self.fft_sizes, self.hop_sizes, self.win_lengths):
-            enhanced_stft = torch.stft(
-                enhanced, n_fft=fft_size,
-                hop_length=hop_size,
-                win_length=win_length,
-                return_complex=True,
-                window=torch.hann_window(
-                        window_length=512,
-                        periodic=False,
-                        dtype=torch.float32,
-                        device=device,
-                        pin_memory=False,
-                        requires_grad=False
-                )
+        enhanced_stft = torch.stft(
+            enhanced, n_fft=self.fft_size,
+            hop_length=self.hop_size,
+            win_length=self.win_length,
+            return_complex=True,
+            window=torch.hann_window(
+                    window_length=self.win_length,
+                    periodic=False,
+                    dtype=torch.float32,
+                    device=device,
+                    pin_memory=False,
+                    requires_grad=False
             )
+        )
 
-            target_stft = torch.stft(
-                target, n_fft=fft_size,
-                hop_length=hop_size,
-                win_length=win_length,
-                return_complex=True,
-                window=torch.hann_window(
-                        window_length=512,
-                        periodic=False,
-                        dtype=torch.float32,
-                        device=device,
-                        pin_memory=False,
-                        requires_grad=False
-                )
+        target_stft = torch.stft(
+            target, n_fft=self.fft_size,
+            hop_length=self.hop_size,
+            win_length=self.win_length,
+            return_complex=True,
+            window=torch.hann_window(
+                    window_length=self.win_length,
+                    periodic=False,
+                    dtype=torch.float32,
+                    device=device,
+                    pin_memory=False,
+                    requires_grad=False
             )
-            # Simple spectral L1
-            loss_val += (enhanced_stft - target_stft).abs().mean()
+        )
+        # Simple spectral L1
+        loss_val += (enhanced_stft - target_stft).abs().mean()
         # Average over the number of STFT scales
-        return loss_val / len(self.fft_sizes)
+        return loss_val
 
 #####################################################################
 # 1. Model Architecture: U-Net style 1D network with skip connections
@@ -258,7 +257,7 @@ def train_model(model, dataloader, val_dataloader, epochs, device, learning_rate
     criterion = nn.MSELoss()
 
     # Optional advanced STFT-based loss
-    stft_criterion = MultiResolutionSTFTLoss() if use_stft_loss else None
+    stft_criterion = STFTLoss() if use_stft_loss else None
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     
