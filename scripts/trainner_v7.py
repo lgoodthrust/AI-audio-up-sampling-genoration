@@ -27,6 +27,9 @@ except ImportError:
     print("pesq not installed. PESQ metric will be skipped.")
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 ########################################
 # Multi-Resolution STFT Loss (optional)
 ########################################
@@ -41,19 +44,38 @@ class MultiResolutionSTFTLoss(nn.Module):
         loss_val = 0.0
         for fft_size, hop_size, win_length in zip(self.fft_sizes, self.hop_sizes, self.win_lengths):
             enhanced_stft = torch.stft(
-                enhanced, n_fft=fft_size, hop_length=hop_size,
-                win_length=win_length, return_complex=True
+                enhanced, n_fft=fft_size,
+                hop_length=hop_size,
+                win_length=win_length,
+                return_complex=True,
+                window=torch.hann_window(
+                        window_length=512,
+                        periodic=False,
+                        dtype=torch.float32,
+                        device=device,
+                        pin_memory=False,
+                        requires_grad=False
+                )
             )
+
             target_stft = torch.stft(
-                target, n_fft=fft_size, hop_length=hop_size,
-                win_length=win_length, return_complex=True
+                target, n_fft=fft_size,
+                hop_length=hop_size,
+                win_length=win_length,
+                return_complex=True,
+                window=torch.hann_window(
+                        window_length=512,
+                        periodic=False,
+                        dtype=torch.float32,
+                        device=device,
+                        pin_memory=False,
+                        requires_grad=False
+                )
             )
             # Simple spectral L1
             loss_val += (enhanced_stft - target_stft).abs().mean()
         # Average over the number of STFT scales
         return loss_val / len(self.fft_sizes)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #####################################################################
 # 1. Model Architecture: U-Net style 1D network with skip connections
@@ -337,7 +359,9 @@ def model_ctrl(
                 epoch_steps=32,
                 samp_rate=96000,
                 segment_len=0.25,
-                use_stft_loss=False
+                use_stft_loss=False,
+                use_augmentation=False
+
     ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -346,7 +370,7 @@ def model_ctrl(
         folder_path=data_folder,
         sample_rate=samp_rate,
         segment_length=segment_len,
-        apply_augmentation=False
+        apply_augmentation=use_augmentation
     )
     print(f"Total data pairs: {len(dataset)}")
 
@@ -424,5 +448,6 @@ if __name__ == "__main__":
         epoch_steps=1,
         samp_rate=sr,
         segment_len=0.25,
-        use_stft_loss=True
+        use_stft_loss=True,
+        use_augmentation=True
     )
